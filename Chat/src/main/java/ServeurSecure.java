@@ -1,9 +1,7 @@
 import java.io.*;
 import java.net.*;
 import java.security.*;
-import java.security.cert.Certificate;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
+import java.security.spec.*;
 import javax.crypto.*;
 import javax.crypto.spec.*;
 import java.util.Base64;
@@ -15,16 +13,9 @@ public class ServeurSecure {
     private static SecurityContext securityContext = new SecurityContext();
 
     public static void main(String[] args) {
-        // Vérification des fichiers de sécurité
-        if (!new File("server.p12").exists() || !new File("truststore.jks").exists()) {
-            System.out.println(" Fichiers de sécurité manquants!");
-            System.out.println("Veuillez générer les certificats avec les commandes dans le rapport.");
-            return;
-        }
-
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
-            System.out.println("️  Serveur sécurisé amélioré en attente sur le port " + PORT + "...");
-            System.out.println(" Authentification par certificat activée");
+            System.out.println("  Serveur sécurisé amélioré en attente sur le port " + PORT + "...");
+            System.out.println(" Authentification par clés RSA activée");
             System.out.println(" Signature des messages activée");
             System.out.println(" Protection anti-replay activée");
 
@@ -46,35 +37,27 @@ public class ServeurSecure {
             BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
             PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true);
 
-            // === ÉTAPE 1: Chargement du certificat serveur ===
-            KeyStore ks = KeyStore.getInstance("PKCS12");
-            ks.load(new FileInputStream("server.p12"), "password".toCharArray());
-            PrivateKey privateKey = (PrivateKey) ks.getKey("server", "password".toCharArray());
-            Certificate cert = ks.getCertificate("server");
-            PublicKey publicKey = cert.getPublicKey();
+            // === ÉTAPE 1: Génération des clés RSA du serveur ===
+            KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+            kpg.initialize(2048);
+            KeyPair kp = kpg.generateKeyPair();
+            PrivateKey serverPrivateKey = kp.getPrivate();
+            PublicKey serverPublicKey = kp.getPublic();
 
-            // Envoi du certificat au client
-            String certB64 = Base64.getEncoder().encodeToString(cert.getEncoded());
-            out.println(certB64);
-            System.out.println(" Certificat serveur envoyé au client");
+            // Envoi de la clé publique au client
+            String pubKeyB64 = Base64.getEncoder().encodeToString(serverPublicKey.getEncoded());
+            out.println(pubKeyB64);
+            System.out.println(" Clé publique RSA serveur envoyée au client");
 
-            // === ÉTAPE 2: Réception et vérification du certificat client ===
-            String clientCertB64 = in.readLine();
-            if (clientCertB64 == null) throw new SecurityException("Certificat client manquant");
+            // === ÉTAPE 2: Réception de la clé publique du client ===
+            String clientPubKeyB64 = in.readLine();
+            if (clientPubKeyB64 == null) throw new SecurityException("Clé publique client manquante");
 
-            byte[] clientCertBytes = Base64.getDecoder().decode(clientCertB64);
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            X509Certificate clientCert = (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(clientCertBytes));
-
-            // Vérification avec le truststore
-            KeyStore trustStore = KeyStore.getInstance("JKS");
-            trustStore.load(new FileInputStream("truststore.jks"), "trustpass".toCharArray());
-            Certificate caCert = trustStore.getCertificate("myca");
-            clientCert.verify(caCert.getPublicKey());
-            clientCert.checkValidity();
-
-            PublicKey clientPublicKey = clientCert.getPublicKey();
-            System.out.println("Certificat client validé: " + clientCert.getSubjectDN());
+            byte[] clientPubKeyBytes = Base64.getDecoder().decode(clientPubKeyB64);
+            KeyFactory kf = KeyFactory.getInstance("RSA");
+            X509EncodedKeySpec keySpec = new X509EncodedKeySpec(clientPubKeyBytes);
+            PublicKey clientPublicKey = kf.generatePublic(keySpec);
+            System.out.println(" Clé publique client reçue et validée");
 
             // === ÉTAPE 3: Échange de clé AES sécurisé ===
             String encryptedAesKeyB64 = in.readLine();
@@ -82,14 +65,14 @@ public class ServeurSecure {
 
             byte[] encryptedAesKey = Base64.getDecoder().decode(encryptedAesKeyB64);
             Cipher rsaCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
-            rsaCipher.init(Cipher.DECRYPT_MODE, privateKey);
+            rsaCipher.init(Cipher.DECRYPT_MODE, serverPrivateKey);
             byte[] aesKeyBytes = rsaCipher.doFinal(encryptedAesKey);
             SecretKeySpec aesKey = new SecretKeySpec(aesKeyBytes, "AES");
             System.out.println(" Clé AES échangée sécurisée (128 bits)");
 
-            // === ÉTAPE 4: Confirmation de l'établissement de la sécurit� ===
+            // === ÉTAPE 4: Confirmation de l'établissement de la sécurité ===
             String secureConfirm = securityContext.addSecurityHeaders("SECURE-HANDSHAKE-OK");
-            String encryptedConfirm = signAndEncrypt(secureConfirm, privateKey, aesKey);
+            String encryptedConfirm = signAndEncrypt(secureConfirm, serverPrivateKey, aesKey);
             out.println(encryptedConfirm);
             System.out.println(" Poignée de main sécurisée terminée");
 
@@ -105,7 +88,7 @@ public class ServeurSecure {
 
                     if (decrypted.equalsIgnoreCase("bye")) {
                         String reply = securityContext.addSecurityHeaders("Au revoir !");
-                        String encryptedReply = signAndEncrypt(reply, privateKey, aesKey);
+                        String encryptedReply = signAndEncrypt(reply, serverPrivateKey, aesKey);
                         out.println(encryptedReply);
                         System.out.println(" Connexion fermée par demande 'bye'");
                         break;
@@ -113,14 +96,14 @@ public class ServeurSecure {
 
                     // Réponse écho sécurisée
                     String reply = securityContext.addSecurityHeaders("Serveur a reçu: " + decrypted);
-                    String encryptedReply = signAndEncrypt(reply, privateKey, aesKey);
+                    String encryptedReply = signAndEncrypt(reply, serverPrivateKey, aesKey);
                     out.println(encryptedReply);
                     System.out.println(" Envoyé (clair)  : " + reply);
 
                 } catch (SecurityException e) {
                     System.out.println(" Message rejeté pour raison de sécurité: " + e.getMessage());
                     String errorMsg = securityContext.addSecurityHeaders("ERROR: Security violation");
-                    String encryptedError = signAndEncrypt(errorMsg, privateKey, aesKey);
+                    String encryptedError = signAndEncrypt(errorMsg, serverPrivateKey, aesKey);
                     out.println(encryptedError);
                 }
             }

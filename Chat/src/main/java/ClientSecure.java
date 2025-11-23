@@ -1,12 +1,13 @@
 import java.io.*;
 import java.net.*;
 import java.security.*;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
+import java.security.spec.*;
 import javax.crypto.*;
 import javax.crypto.spec.*;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.Scanner;
+import java.util.Set;
 
 public class ClientSecure {
     public static final String SERVER_HOST = "localhost";
@@ -14,50 +15,38 @@ public class ClientSecure {
     private static SecurityContext securityContext = new SecurityContext();
 
     public static void main(String[] args) {
-        // Vérification des fichiers de sécurité
-        if (!new File("client.p12").exists() || !new File("truststore.jks").exists()) {
-            System.out.println(" Fichiers de sécurité manquants!");
-            System.out.println("Veuillez générer les certificats avec les commandes dans le rapport.");
-            return;
-        }
-
         try (Socket socket = new Socket(SERVER_HOST, SERVER_PORT)) {
             System.out.println(" Connecté au serveur " + SERVER_HOST + ":" + SERVER_PORT);
-            System.out.println(" Authentification par certificat activée");
+            System.out.println(" Authentification par clés RSA activée");
             System.out.println(" Signature des messages activée");
-            System.out.println("  Protection anti-replay activée");
+            System.out.println(" Protection anti-replay activée");
 
             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
             Scanner sc = new Scanner(System.in);
 
-            // === ÉTAPE 1: Échange de certificats ===
+            // === ÉTAPE 1: Échange de clés publiques RSA ===
 
-            // Réception et vérification du certificat serveur
-            String serverCertB64 = in.readLine();
-            if (serverCertB64 == null) throw new SecurityException("Certificat serveur manquant");
+            // Réception de la clé publique du serveur
+            String serverPubKeyB64 = in.readLine();
+            if (serverPubKeyB64 == null) throw new SecurityException("Clé publique serveur manquante");
 
-            byte[] serverCertBytes = Base64.getDecoder().decode(serverCertB64);
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            X509Certificate serverCert = (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(serverCertBytes));
+            byte[] serverPubKeyBytes = Base64.getDecoder().decode(serverPubKeyB64);
+            KeyFactory kf = KeyFactory.getInstance("RSA");
+            X509EncodedKeySpec keySpec = new X509EncodedKeySpec(serverPubKeyBytes);
+            PublicKey serverPublicKey = kf.generatePublic(keySpec);
+            System.out.println(" Clé publique serveur reçue et validée");
 
-            // Vérification avec le truststore
-            KeyStore trustStore = KeyStore.getInstance("JKS");
-            trustStore.load(new FileInputStream("truststore.jks"), "trustpass".toCharArray());
-            Certificate caCert = trustStore.getCertificate("myca");
-            serverCert.verify(caCert.getPublicKey());
-            serverCert.checkValidity();
+            // Génération et envoi de la clé publique du client
+            KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+            kpg.initialize(2048);
+            KeyPair clientKeyPair = kpg.generateKeyPair();
+            PrivateKey clientPrivateKey = clientKeyPair.getPrivate();
+            PublicKey clientPublicKey = clientKeyPair.getPublic();
 
-            PublicKey serverPublicKey = serverCert.getPublicKey();
-            System.out.println(" Certificat serveur validé: " + serverCert.getSubjectDN());
-
-            // Envoi du certificat client
-            KeyStore ks = KeyStore.getInstance("PKCS12");
-            ks.load(new FileInputStream("client.p12"), "password".toCharArray());
-            Certificate clientCert = ks.getCertificate("client");
-            String clientCertB64 = Base64.getEncoder().encodeToString(clientCert.getEncoded());
-            out.println(clientCertB64);
-            System.out.println(" Certificat client envoyé au serveur");
+            String clientPubKeyB64 = Base64.getEncoder().encodeToString(clientPublicKey.getEncoded());
+            out.println(clientPubKeyB64);
+            System.out.println(" Clé publique client envoyée au serveur");
 
             // === ÉTAPE 2: Échange de clé AES sécurisé ===
             KeyGenerator kg = KeyGenerator.getInstance("AES");
@@ -77,7 +66,7 @@ public class ClientSecure {
             // === ÉTAPE 3: Confirmation de sécurité ===
             String serverConfirmEncrypted = in.readLine();
             String serverConfirm = verifyAndDecrypt(serverConfirmEncrypted, serverPublicKey, aesKeySpec);
-            System.out.println(" c bon " + serverConfirm);
+            System.out.println("c bon " + serverConfirm);
 
             // === ÉTAPE 4: Communication sécurisée ===
             while (true) {
@@ -86,8 +75,7 @@ public class ClientSecure {
 
                 try {
                     String securedMsg = securityContext.addSecurityHeaders(msg);
-                    String encryptedMsg = signAndEncrypt(securedMsg,
-                            (PrivateKey) ks.getKey("client", "password".toCharArray()), aesKeySpec);
+                    String encryptedMsg = signAndEncrypt(securedMsg, clientPrivateKey, aesKeySpec);
 
                     out.println(encryptedMsg);
                     System.out.println(" Envoyé (clair)  : " + msg);
@@ -184,5 +172,57 @@ public class ClientSecure {
         cipher.init(Cipher.DECRYPT_MODE, aesKey, new IvParameterSpec(iv));
         byte[] plainBytes = cipher.doFinal(cipherBytes);
         return new String(plainBytes, "UTF-8");
+    }
+}
+
+// Classe pour la gestion du contexte de sécurité (identique au serveur)
+class SecurityContext {
+    private long lastTimestamp = 0;
+    private int sequenceNumber = 0;
+    private Set<String> seenMessages = new HashSet<>();
+
+    public synchronized String addSecurityHeaders(String message) {
+        long timestamp = System.currentTimeMillis();
+        sequenceNumber++;
+
+        String securedMessage = timestamp + "|" + sequenceNumber + "|" + message;
+
+        // Protection contre le replay
+        if (seenMessages.contains(securedMessage)) {
+            throw new SecurityException("Message rejoué détecté");
+        }
+        seenMessages.add(securedMessage);
+
+        // Nettoyage périodique
+        if (seenMessages.size() > 1000) {
+            seenMessages.clear();
+        }
+
+        return securedMessage;
+    }
+
+    public synchronized String verifySecurityHeaders(String securedMessage) {
+        String[] parts = securedMessage.split("\\|", 3);
+        if (parts.length != 3) {
+            throw new SecurityException("En-têtes de sécurité manquantes");
+        }
+
+        long timestamp = Long.parseLong(parts[0]);
+        int seq = Integer.parseInt(parts[1]);
+        String message = parts[2];
+
+        // Vérification timestamp (5 minutes de tolérance)
+        long currentTime = System.currentTimeMillis();
+        if (Math.abs(currentTime - timestamp) > 300000) { // 5 minutes
+            throw new SecurityException("Message trop ancien");
+        }
+
+        // Vérification séquence
+        if (seq <= sequenceNumber) {
+            throw new SecurityException("Numéro de séquence invalide");
+        }
+        sequenceNumber = seq;
+
+        return message;
     }
 }
