@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx/21"
+            xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="Application.ClientController">
+
+    <center>
+        <ListView fx:id="messageArea"
+                  BorderPane.alignment="CENTER"
+                  VBox.vgrow="ALWAYS" />
+    </center>
+
+    <bottom>
+        <HBox spacing="10.0" alignment="CENTER_LEFT" style="-fx-padding: 10;">
+
+            <TextField fx:id="inputField"
+                       HBox.hgrow="ALWAYS"
+                       promptText="Tapez votre message ici..." />
+
+            <Button fx:id="sendButton"
+                    text="Envoyer"
+                    onAction="#sendMessage" />
+        </HBox>
+    </bottom>
+</BorderPane>
