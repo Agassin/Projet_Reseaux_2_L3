@@ -10,7 +10,6 @@ import java.util.Scanner;
 public class ClientSecure {
     public static final String SERVER_HOST = "localhost";
     public static final int SERVER_PORT = 5000;
-    // Crée une instance locale de SecurityContext pour le client
     private static SecurityContext securityContext = new SecurityContext();
 
     public static void main(String[] args) {
@@ -20,86 +19,84 @@ public class ClientSecure {
              Scanner sc = new Scanner(System.in)) {
 
             System.out.println(" Connecté au serveur " + SERVER_HOST + ":" + SERVER_PORT);
+            System.out.print(" Entrez votre nom d'utilisateur: ");
+            String username = sc.nextLine();
 
-            // === ÉTAPE 1: Échange de clés publiques RSA ===
+            // --- ÉTAPE 1: Poignée de main de sécurité (Handshake) ---
 
             // Réception de la clé publique du serveur
             String serverPubKeyB64 = in.readLine();
             if (serverPubKeyB64 == null) throw new SecurityException("Clé publique serveur manquante");
-
             byte[] serverPubKeyBytes = Base64.getDecoder().decode(serverPubKeyB64);
             KeyFactory kf = KeyFactory.getInstance("RSA");
             X509EncodedKeySpec keySpec = new X509EncodedKeySpec(serverPubKeyBytes);
             PublicKey serverPublicKey = kf.generatePublic(keySpec);
-            System.out.println(" Clé publique serveur reçue et validée");
 
             // Génération et envoi de la clé publique du client
             KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
             kpg.initialize(2048);
             KeyPair clientKeyPair = kpg.generateKeyPair();
             PrivateKey clientPrivateKey = clientKeyPair.getPrivate();
-            PublicKey clientPublicKey = clientKeyPair.getPublic();
-
-            String clientPubKeyB64 = Base64.getEncoder().encodeToString(clientPublicKey.getEncoded());
+            String clientPubKeyB64 = Base64.getEncoder().encodeToString(clientKeyPair.getPublic().getEncoded());
             out.println(clientPubKeyB64);
-            System.out.println(" Clé publique client envoyée au serveur");
 
-            // === ÉTAPE 2: Échange de clé AES sécurisé ===
+            // Échange de clé AES sécurisé
             KeyGenerator kg = KeyGenerator.getInstance("AES");
             kg.init(128);
             SecretKey aesKey = kg.generateKey();
-            byte[] aesKeyBytes = aesKey.getEncoded();
-            SecretKeySpec aesKeySpec = new SecretKeySpec(aesKeyBytes, "AES");
+            SecretKeySpec aesKeySpec = new SecretKeySpec(aesKey.getEncoded(), "AES");
 
-            // Chiffrement de la clé AES avec la clé publique du serveur
             Cipher rsaCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
             rsaCipher.init(Cipher.ENCRYPT_MODE, serverPublicKey);
-            byte[] encryptedAesKey = rsaCipher.doFinal(aesKeyBytes);
+            byte[] encryptedAesKey = rsaCipher.doFinal(aesKey.getEncoded());
             String encryptedAesKeyB64 = Base64.getEncoder().encodeToString(encryptedAesKey);
             out.println(encryptedAesKeyB64);
-            System.out.println(" Clé AES générée et envoyée (chiffrée avec RSA)");
 
-            // === ÉTAPE 3: Confirmation de sécurité ===
+            // Confirmation de sécurité
             String serverConfirmEncrypted = in.readLine();
-            // Utilisation des méthodes statiques de CryptoUtils
             String serverConfirm = CryptoUtils.verifyAndDecrypt(serverConfirmEncrypted, serverPublicKey, aesKeySpec, securityContext);
             System.out.println(" Poignée de main confirmée par le serveur: " + serverConfirm);
 
-            // === ÉTAPE 4: Communication sécurisée ===
+            // === NOUVEAU: Lancement du Thread d'Écoute (Reader) ===
+            Thread readerThread = new Thread(new ServerReader(socket, in, serverPublicKey, aesKeySpec, securityContext));
+            readerThread.start();
+
+            System.out.println("\n Chat sécurisé prêt. Tapez 'bye' pour quitter.");
+
+            // --- Étape d'identification ---
+            // Le premier message envoyé est le nom d'utilisateur pour s'identifier sur le serveur
+            String identificationMsg = username + ": Je suis là !";
+            String securedIdMsg = securityContext.addSecurityHeaders(identificationMsg);
+            String encryptedIdMsg = CryptoUtils.signAndEncrypt(securedIdMsg, clientPrivateKey, aesKeySpec);
+            out.println(encryptedIdMsg);
+
+
+            // --- ÉTAPE 2: Communication sécurisée (Thread principal pour l'écriture) ---
             while (true) {
-                System.out.print("\n Vous > ");
+                System.out.print(" " + username + " > ");
                 String msg = sc.nextLine();
 
                 try {
                     String securedMsg = securityContext.addSecurityHeaders(msg);
-                    // Utilisation des méthodes statiques de CryptoUtils
                     String encryptedMsg = CryptoUtils.signAndEncrypt(securedMsg, clientPrivateKey, aesKeySpec);
 
                     out.println(encryptedMsg);
-                    System.out.println(" Envoyé (clair)  : " + msg);
 
                     if (msg.equalsIgnoreCase("bye")) {
-                        System.out.println(" Déconnexion demandée");
                         break;
                     }
 
-                    // Réception de la réponse
-                    String serverResponse = in.readLine();
-                    if (serverResponse == null) break;
-
-                    // Utilisation des méthodes statiques de CryptoUtils
-                    String decryptedResponse = CryptoUtils.verifyAndDecrypt(serverResponse, serverPublicKey, aesKeySpec, securityContext);
-                    System.out.println(" Serveur > " + decryptedResponse);
-
-                } catch (SecurityException e) {
-                    System.out.println(" Erreur de sécurité: " + e.getMessage());
+                } catch (Exception e) {
+                    System.out.println(" Erreur lors de l'envoi du message: " + e.getMessage());
                 }
             }
 
-            System.out.println(" Connexion fermée");
+            System.out.println(" Déconnexion demandée...");
+            // Le socket sera fermé par le bloc try-with-resources
+            readerThread.interrupt(); // Force l'arrêt du thread d'écoute
 
         } catch (Exception e) {
-            System.out.println(" Erreur: " + e.getMessage());
+            System.out.println(" Erreur fatale du client: " + e.getMessage());
         }
     }
 }
