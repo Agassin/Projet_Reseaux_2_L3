@@ -6,48 +6,43 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.Label;
 import javafx.application.Platform;
 import javafx.scene.input.MouseEvent;
-
-import java.util.Optional;
 import javafx.scene.control.TextInputDialog;
-import javafx.scene.control.Alert;
-import javafx.scene.control.Alert.AlertType;
+import java.util.Optional;
+
 
 public class ClientController {
 
     @FXML public ListView<String> messageArea;
     @FXML private TextField inputField;
-    @FXML private ListView<String> roomList; // NOUVEAU
-    @FXML private Label currentRoomLabel;   // NOUVEAU
+    @FXML private ListView<String> roomList;
+    @FXML private Label currentRoomLabel;
 
     private ClientSecureFX client;
-    private String currentRoom = "Général"; //
+    private String currentRoom = "Général";
 
-    // ... setClient est inchangé
+    public void setClient(ClientSecureFX client) {
+        this.client = client;
+    }
 
     @FXML
     public void initialize() {
-        // Permettre l'envoi du message en appuyant sur ENTER
         inputField.setOnAction(event -> sendMessage());
 
-        // NOUVEAU: Initialiser la liste des salons
-        roomList.getItems().add("Général"); // Salon par défaut
+        // Initialiser la liste des salons
+        roomList.getItems().add("Général");
         roomList.getSelectionModel().selectFirst();
         roomList.setOnMouseClicked(this::handleRoomSelection);
     }
 
-    // NOUVEAU: Gérer le clic sur un salon
     private void handleRoomSelection(MouseEvent event) {
         String selectedRoom = roomList.getSelectionModel().getSelectedItem();
         if (selectedRoom != null && !selectedRoom.equals(currentRoom)) {
-            // 1. Demander au client de notifier le serveur qu'on change de salon
-            // (La logique de connexion/déconnexion des salons doit être côté Serveur)
             try {
-                // Vous devez créer une méthode de commande dans ClientSecureFX (e.g. client.joinRoom(selectedRoom))
-                // Pour l'instant, on simule juste le changement
+                // (Ici, vous enverriez client.joinRoom(selectedRoom) au serveur)
 
                 currentRoom = selectedRoom;
                 currentRoomLabel.setText("Salon Actuel : " + currentRoom);
-                messageArea.getItems().clear(); // Vider l'historique du chat
+                messageArea.getItems().clear();
                 displayMessage("--- Vous avez rejoint le salon: " + currentRoom + " ---");
 
             } catch (Exception e) {
@@ -55,7 +50,6 @@ public class ClientController {
             }
         }
     }
-
 
     @FXML
     private void createPrivateRoom() {
@@ -68,16 +62,14 @@ public class ClientController {
         result.ifPresent(privateUser -> {
             String newRoomName = "Privé avec " + privateUser;
             try {
-                // Envoyer une commande au serveur pour créer/rejoindre un salon privé
-                // client.requestPrivateRoom(privateUser); <-- Nouvelle méthode à créer
+                // (Ici, vous enverriez client.requestPrivateRoom(privateUser) au serveur)
 
-                // Si la création réussit (selon la réponse du serveur)
                 Platform.runLater(() -> {
                     if (!roomList.getItems().contains(newRoomName)) {
                         roomList.getItems().add(newRoomName);
                     }
                     roomList.getSelectionModel().select(newRoomName);
-                    handleRoomSelection(null); // Force le changement de salon
+                    handleRoomSelection(null);
                 });
 
             } catch (Exception e) {
@@ -86,17 +78,16 @@ public class ClientController {
         });
     }
 
-
     @FXML
     private void sendMessage() {
         String message = inputField.getText();
         if (message.isEmpty() || client == null) return;
 
         try {
-            // MODIFICATION MAJEURE: Préfixer le message avec le nom du salon
+            // Préfixer le message avec le nom du salon
             String messageToSend = currentRoom + "|" + message;
 
-            client.sendSecuredMessage(messageToSend); // Le client ajoutera ensuite l'utilisateur et les headers
+            client.sendSecuredMessage(messageToSend);
 
             // Affichage local immédiat
             displayMessage("Vous (" + currentRoom + "): " + message);
@@ -106,20 +97,11 @@ public class ClientController {
             displayMessage("Erreur d'envoi du message: " + e.getMessage());
         }
     }
-    // MÉTHODE CRUCIALE pour mettre à jour la GUI depuis le thread réseau
+
     public void displayMessage(String message) {
-        // Utiliser Platform.runLater pour s'assurer que la modification de l'interface
-        // est exécutée sur le thread principal de JavaFX.
         Platform.runLater(() -> {
             messageArea.getItems().add(message);
-            // Faire défiler vers le bas pour voir le nouveau message
             messageArea.scrollTo(messageArea.getItems().size() - 1);
         });
     }
-
-    public void setClient(ClientSecureFX client) {
-        this.client = client;
-    }
-
-
 }
