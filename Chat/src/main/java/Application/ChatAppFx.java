@@ -40,6 +40,7 @@ public class ChatAppFx extends Application {
         alert.setHeaderText("Impossible de se connecter au serveur.");
         alert.setContentText("Vérifiez que le Serveur est lancé. Détails: " + details);
         alert.showAndWait();
+        javafx.application.Platform.runLater(stage::close);
 
     }
 
