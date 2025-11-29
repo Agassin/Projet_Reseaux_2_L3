@@ -4,72 +4,66 @@ import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
-import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Alert.AlertType;
 import java.io.IOException;
-import java.util.Optional;
 
 public class ChatAppFx extends Application {
 
+    private Stage primaryStage; // Garder une référence au Stage principal
+
+    // Dans ChatAppFx.java (méthode start)
     @Override
     public void start(Stage stage) throws IOException {
+        this.primaryStage = stage;
 
-        // 1. Demander le nom d'utilisateur au démarrage
-        String username = getUsername();
-        if (username == null || username.trim().isEmpty()) {
-            System.err.println("Nom d'utilisateur requis. Fermeture.");
-            return;
-        }
+        FXMLLoader fxmlLoader = new FXMLLoader(ChatAppFx.class.getResource("LoginView.fxml"));
+        Scene scene = new Scene(fxmlLoader.load(), 350, 250);
 
-        // 2. Charger le FXML et obtenir le contrôleur
-        FXMLLoader fxmlLoader = new FXMLLoader(ChatAppFx.class.getResource("ChatView.fxml"));
-        Scene scene = new Scene(fxmlLoader.load(), 600, 400);
+        LoginController loginController = fxmlLoader.getController();
 
-        ClientController controller = fxmlLoader.getController();
+        stage.setTitle("Connexion Chat Sécurisé FX");
+        stage.setScene(scene); // <-- Définir la Scene en premier.
 
-        try {
-            // 3. Initialiser le client avec le nom d'utilisateur (Handshake)
-            ClientSecureFX client = new ClientSecureFX(ClientSecureFX.SERVER_HOST, ClientSecureFX.SERVER_PORT, username);
+        // Injecter l'instance 'this' (l'instance courante et valide de ChatAppFx)
+        loginController.setApp(this, stage); // <-- Utiliser 'this'
 
-            // 4. Lier l'instance client au contrôleur
-            controller.setClient(client);
-
-            // 5. Démarrer le thread d'écoute des messages du serveur
-            client.startListening(controller);
-
-            // 6. Afficher la fenêtre
-            stage.setTitle("Chat Sécurisé FX - Utilisateur: " + username);
-            stage.setScene(scene);
-            stage.show();
-
-        } catch (Exception e) {
-            // Gérer les erreurs de connexion ou de sécurité (e.g., serveur non lancé)
-            System.err.println("ERREUR: Impossible de démarrer le client réseau.");
-            System.err.println("Détail: " + e.getMessage());
-            showErrorAlert(stage, e.getMessage());
-        }
+        stage.show();
     }
 
-    // Ajout d'une méthode pour demander le nom d'utilisateur via une boîte de dialogue
-    private String getUsername() {
-        TextInputDialog dialog = new TextInputDialog("UtilisateurFX");
-        dialog.setTitle("Nom d'utilisateur");
-        dialog.setHeaderText("Entrez votre nom d'utilisateur pour le chat :");
-        dialog.setContentText("Nom :");
 
-        Optional<String> result = dialog.showAndWait();
-        return result.orElse(null);
-    }
-
-    private void showErrorAlert(Stage stage, String details) {
+    // Ancien getUsername() supprimé.
+    // showErrorAlert est conservé, mais nous l'appelons maintenant depuis le LoginController
+    public void showErrorAlert(String details) {
         Alert alert = new Alert(AlertType.ERROR);
         alert.setTitle("Erreur de Connexion");
         alert.setHeaderText("Impossible de se connecter au serveur.");
-        alert.setContentText("Vérifiez que le Serveur est lancé et que les configurations de sécurité sont correctes. Détails: " + details);
+        alert.setContentText("Vérifiez que le Serveur est lancé. Détails: " + details);
         alert.showAndWait();
-        stage.close();
+
     }
+
+    // Nouvelle méthode pour passer du login au chat principal
+    public void startChat(String username, ClientSecureFX client) throws IOException {
+        // Charger le FXML de la vue du chat
+        FXMLLoader fxmlLoader = new FXMLLoader(ChatAppFx.class.getResource("ChatView.fxml"));
+        Scene scene = new Scene(fxmlLoader.load(), 800, 500); // Agrandir la fenêtre pour les salons
+
+        ClientController controller = fxmlLoader.getController();
+
+        // Lier l'instance client au contrôleur
+        controller.setClient(client);
+
+        // Démarrer le thread d'écoute des messages du serveur
+        client.startListening(controller);
+
+        // Afficher la fenêtre de chat
+        primaryStage.setTitle("Chat Sécurisé FX - Utilisateur: " + username);
+        primaryStage.setScene(scene);
+        primaryStage.show();
+        primaryStage.centerOnScreen();
+    }
+
     public static void main(String[] args) {
         launch(args);
     }

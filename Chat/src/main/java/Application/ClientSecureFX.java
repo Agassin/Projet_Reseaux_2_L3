@@ -33,8 +33,7 @@ public class ClientSecureFX {
         // Exécution du Handshake complet
         performHandshake();
 
-        // Envoi du nom d'utilisateur au serveur (premier message après Handshake)
-        sendSecuredMessage(username + ": Connexion.");
+
     }
 
     // Méthode pour regrouper toute la logique de poignée de main
@@ -120,5 +119,18 @@ public class ClientSecureFX {
         } catch (IOException e) {
             System.err.println("Erreur lors de la fermeture des ressources: " + e.getMessage());
         }
+    }
+
+    public void sendLoginCredentials(String username, String password) throws Exception {
+        // Le serveur doit être capable de reconnaître cette commande spécifique.
+        // Utilisez un préfixe que le serveur peut interpréter, par exemple:
+        String loginMessage = "/LOGIN:" + username + ":" + password;
+
+        String securedMsg = securityContext.addSecurityHeaders(loginMessage);
+        String encryptedMsg = CryptoUtilsFX.signAndEncrypt(securedMsg, clientPrivateKey, aesKeySpec);
+        out.println(encryptedMsg);
+
+        // Le code CÔTÉ SERVEUR doit attendre la réponse: OK ou FAIL
+        // Pour l'instant, nous faisons confiance et continuons, mais en production, ce serait bloquant.
     }
 }
