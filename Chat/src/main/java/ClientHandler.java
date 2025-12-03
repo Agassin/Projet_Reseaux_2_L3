@@ -64,8 +64,7 @@ public class ClientHandler implements Runnable {
                     );
 
                     // Le contenu réel du message est la troisième partie après les headers de sécurité
-                    String[] parts = decryptedMessageWithHeaders.split("\\|", 3);
-                    String message = parts[2];
+                    String message = decryptedMessageWithHeaders;
 
                     if (message.startsWith("/LOGIN:")) {
                         // 1. Traiter l'authentification
