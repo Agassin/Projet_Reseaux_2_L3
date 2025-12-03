@@ -125,7 +125,7 @@ public class ClientHandler implements Runnable {
         KeyFactory kf = KeyFactory.getInstance("RSA");
         // L'erreur InvalidKeyException se produisait ici car les données lues n'étaient pas une clé publique.
         clientPublicKey = kf.generatePublic(new X509EncodedKeySpec(clientPubKeyBytes));
-        System.out.println("✅ [HANDSHAKE] Clé publique client reçue");
+        System.out.println("✅ [HANDSHAKE] Clé publique client reçues");
 
 
         // 4. Confirmation de l'établissement de la sécurité
