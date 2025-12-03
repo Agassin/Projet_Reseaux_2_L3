@@ -13,6 +13,8 @@ public class ClientSecure {
     private static SecurityContext securityContext = new SecurityContext();
 
     public static void main(String[] args) {
+        Thread readerThread = null;
+
         try (Socket socket = new Socket(SERVER_HOST, SERVER_PORT);
              BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
              PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
@@ -55,13 +57,35 @@ public class ClientSecure {
             // Confirmation de sécurité
             String serverConfirmEncrypted = in.readLine();
             String serverConfirm = CryptoUtils.verifyAndDecrypt(serverConfirmEncrypted, serverPublicKey, aesKeySpec, securityContext);
-            System.out.println(" Poignée de main confirmée par le serveur: " + serverConfirm);
+            System.out.println("✅ Confirmation reçue: " + serverConfirm);
+            System.out.println("========== HANDSHAKE TERMINÉ ==========");
 
-            // === NOUVEAU: Lancement du Thread d'Écoute (Reader) ===
-            Thread readerThread = new Thread(new ServerReader(socket, in, serverPublicKey, aesKeySpec, securityContext, username));            readerThread.start();
+
+            // --- NOUVELLE ÉTAPE : AUTHENTIFICATION (LOGIN) ---
+            System.out.println("\n [AUTH] Envoi des credentials pour: " + username);
+            String password = "motdepassetest"; // Placeholder
+            String identificationMsg = "/LOGIN:" + username + ":" + password;
+
+            String securedIdMsg = securityContext.addSecurityHeaders(identificationMsg);
+            String encryptedIdMsg = CryptoUtils.signAndEncrypt(securedIdMsg, clientPrivateKey, aesKeySpec);
+            out.println(encryptedIdMsg);
+
+            // Attendre la réponse d'authentification du serveur (AUTH_OK ou AUTH_FAIL)
+            String authResponseEncrypted = in.readLine();
+            if (authResponseEncrypted == null) throw new SecurityException("Réponse d'authentification manquante.");
+
+            String authResponse = CryptoUtils.verifyAndDecrypt(authResponseEncrypted, serverPublicKey, aesKeySpec, securityContext);
+            System.out.println(" [AUTH] Réponse du serveur: " + authResponse);
+
+            if (authResponse.startsWith("AUTH_FAIL")) {
+                throw new SecurityException("Authentification échouée: " + authResponse.split(":")[1]);
+            }
+
+            // === Lancement du Thread d'Écoute (Reader) APRES l'authentification réussie ===
+            readerThread = new Thread(new ServerReader(socket, in, serverPublicKey, aesKeySpec, securityContext, username));
+            readerThread.start();
 
             System.out.println("\n Chat sécurisé prêt. Tapez 'bye' pour quitter.");
-
 
 
             // --- ÉTAPE 2: Communication sécurisée (Thread principal pour l'écriture) ---
@@ -85,8 +109,11 @@ public class ClientSecure {
             }
 
             System.out.println(" Déconnexion demandée...");
-            // Le socket sera fermé par le bloc try-with-resources
-            readerThread.interrupt(); // Force l'arrêt du thread d'écoute
+
+            if (readerThread != null) {
+                readerThread.interrupt(); // Force l'arrêt du thread d'écoute
+            }
+
 
         } catch (Exception e) {
             System.out.println(" Erreur fatale du client: " + e.getMessage());
