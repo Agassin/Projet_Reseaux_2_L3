@@ -18,10 +18,15 @@ public class ClientController {
     @FXML private Label currentRoomLabel;
 
     private ClientSecureFX client;
+    private String username;
     private String currentRoom = "Général";
 
     public void setClient(ClientSecureFX client) {
         this.client = client;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
     }
 
     @FXML
@@ -84,13 +89,11 @@ public class ClientController {
         if (message.isEmpty() || client == null) return;
 
         try {
-            // Préfixer le message avec le nom du salon
-            String messageToSend = currentRoom + "|" + message;
+            // CORRECTION : Le message brut, sendSecuredMessage ajoutera le username
+            client.sendSecuredMessage(message);
 
-            client.sendSecuredMessage(messageToSend);
-
-            // Affichage local immédiat
-            displayMessage("Vous (" + currentRoom + "): " + message);
+            // Affichage local immédiat avec votre username
+            displayMessage(username + " (" + currentRoom + "): " + message);
             inputField.clear();
 
         } catch (Exception e) {

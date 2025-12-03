@@ -52,20 +52,22 @@ public class ChatAppFx extends Application {
 
         ClientController controller = fxmlLoader.getController();
 
-        // 1. Lier l'instance client au contrôleur
+        // 1. Lier l'instance client au contrôleur ET passer le username
         controller.setClient(client);
+        controller.setUsername(username);
 
-        // 2. Démarrer le thread d'écoute des messages du serveur (PRÊT À RECEVOIR)
-        client.startListening(controller);
-
-        // 3. ENVOYER le message de connexion APRES que l'écoute est lancée
-        client.sendSecuredMessage(username + ": Connexion.");
-
-        // 4. Afficher la fenêtre de chat
+        // 2. Afficher la fenêtre de chat AVANT de démarrer la communication
         primaryStage.setTitle("Chat Sécurisé FX - Utilisateur: " + username);
         primaryStage.setScene(scene);
         primaryStage.show();
         primaryStage.centerOnScreen();
+
+        // 3. Démarrer le thread d'écoute des messages du serveur
+        client.startListening(controller);
+
+        // 4. Optionnel : Envoyer un message de connexion si votre serveur l'attend
+        // Commentez cette ligne si votre serveur n'attend pas de message après AUTH_OK
+        // client.sendSecuredMessage("Connexion.");
     }
 
     public static void main(String[] args) {
