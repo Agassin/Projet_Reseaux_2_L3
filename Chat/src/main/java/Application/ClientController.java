@@ -9,7 +9,6 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.control.TextInputDialog;
 import java.util.Optional;
 
-
 public class ClientController {
 
     @FXML private ListView<String> messageArea;
@@ -31,23 +30,25 @@ public class ClientController {
 
     @FXML
     public void initialize() {
+        System.out.println("[CONTROLLER] Initialisation...");
+
         inputField.setOnAction(event -> sendMessage());
 
         roomList.getItems().add("Général");
         roomList.getSelectionModel().selectFirst();
         roomList.setOnMouseClicked(this::handleRoomSelection);
         currentRoomLabel.setText("Salon Actuel : " + currentRoom);
+
+        System.out.println("[CONTROLLER] ✓ Interface initialisée");
     }
 
     private void handleRoomSelection(MouseEvent event) {
         String selectedRoom = roomList.getSelectionModel().getSelectedItem();
         if (selectedRoom != null && !selectedRoom.equals(currentRoom)) {
-            // Logique de changement de salon (à implémenter côté serveur)
             currentRoom = selectedRoom;
             currentRoomLabel.setText("Salon Actuel : " + currentRoom);
             messageArea.getItems().clear();
-            displayMessage("--- Vous avez rejoint le salon: " + currentRoom + " ---");
-            // Envoyer un message au serveur pour rejoindre le salon si nécessaire
+            displayMessage("--- Vous avez rejoint: " + currentRoom + " ---");
         }
     }
 
@@ -55,8 +56,8 @@ public class ClientController {
     private void createPrivateRoom() {
         TextInputDialog dialog = new TextInputDialog();
         dialog.setTitle("Nouveau Salon Privé");
-        dialog.setHeaderText("Entrez le nom de l'utilisateur avec qui chatter :");
-        dialog.setContentText("Nom de l'utilisateur :");
+        dialog.setHeaderText("Nom de l'utilisateur :");
+        dialog.setContentText("Utilisateur :");
 
         Optional<String> result = dialog.showAndWait();
         result.ifPresent(privateUser -> {
@@ -66,33 +67,33 @@ public class ClientController {
                     roomList.getItems().add(newRoomName);
                 }
                 roomList.getSelectionModel().select(newRoomName);
-                handleRoomSelection(null); // Force le changement d'affichage
+                handleRoomSelection(null);
             });
         });
     }
 
     @FXML
     private void sendMessage() {
-        String message = inputField.getText();
+        String message = inputField.getText().trim();
         if (message.isEmpty() || client == null) return;
 
         try {
-            // Format du message envoyé au serveur : SALON|MESSAGE
+            // Format: SALON|MESSAGE
             String messageToSend = currentRoom + "|" + message;
             client.sendSecuredMessage(messageToSend);
 
-            // Affichage local immédiat
-            displayMessage(username + " (" + currentRoom + "): " + message);
+            // ⭐ NE PAS afficher localement (le serveur va le broadcaster)
+            // On le verra quand le serveur nous le renverra
+
             inputField.clear();
 
         } catch (Exception e) {
             displayMessage("[ERREUR ENVOI] " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
     public void displayMessage(String message) {
-        // Le serveur nous envoie : [NOM_EXPEDITEUR] : [SALON] | [MESSAGE]
-        // Nous allons l'afficher tel quel pour le moment.
         Platform.runLater(() -> {
             messageArea.getItems().add(message);
             messageArea.scrollTo(messageArea.getItems().size() - 1);

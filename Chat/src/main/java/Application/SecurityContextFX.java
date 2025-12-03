@@ -4,45 +4,53 @@ import java.util.HashSet;
 import java.util.Set;
 
 public class SecurityContextFX {
-    // Séparer les compteurs d'envoi et de réception
+    // ⭐ SÉPARATION DES COMPTEURS
     private int sendSequenceNumber = 0;
     private int receiveSequenceNumber = 0;
 
-    private Set<String> seenMessages = new HashSet<>();
+    private final Set<String> seenMessages = new HashSet<>();
     private final long MAX_AGE = 300000; // 5 minutes
 
-    public String addSecurityHeaders(String message) {
+    public synchronized String addSecurityHeaders(String message) {
         long timestamp = System.currentTimeMillis();
-        sendSequenceNumber++;
+        sendSequenceNumber++; // ⭐ Compteur d'ENVOI uniquement
 
         String securedMessage = timestamp + "|" + sendSequenceNumber + "|" + message;
-
         return securedMessage;
     }
 
-    public String verifySecurityHeaders(String securedMessage) {
+    public synchronized String verifySecurityHeaders(String securedMessage) {
         String[] parts = securedMessage.split("\\|", 3);
         if (parts.length != 3) {
             throw new SecurityException("En-têtes de sécurité manquantes");
         }
 
-        long timestamp = Long.parseLong(parts[0]);
-        int seq = Integer.parseInt(parts[1]);
-        String message = parts[2];
+        long timestamp;
+        int seq;
+        String message;
+
+        try {
+            timestamp = Long.parseLong(parts[0]);
+            seq = Integer.parseInt(parts[1]);
+            message = parts[2];
+        } catch (NumberFormatException e) {
+            throw new SecurityException("Format des en-têtes invalide");
+        }
 
         // Vérification timestamp
         long currentTime = System.currentTimeMillis();
         if (Math.abs(currentTime - timestamp) > MAX_AGE) {
-            throw new SecurityException("Message trop ancien (tolérance de 5 minutes dépassée)");
+            throw new SecurityException("Message trop ancien (> 5 minutes)");
         }
 
-        // Vérification séquence (maintenant sur receiveSequenceNumber)
+        // ⭐ Vérification avec le compteur de RÉCEPTION
         if (seq <= receiveSequenceNumber) {
-            throw new SecurityException("Numéro de séquence invalide (plus petit ou égal au dernier vu)");
+            throw new SecurityException("Numéro de séquence invalide: " + seq
+                    + " (attendu > " + receiveSequenceNumber + ")");
         }
-        receiveSequenceNumber = seq;
+        receiveSequenceNumber = seq; // ⭐ Mise à jour du compteur de réception
 
-        // Protection anti-replay basique
+        // Protection anti-replay
         if (seenMessages.contains(securedMessage)) {
             throw new SecurityException("Message rejoué détecté");
         }
@@ -54,5 +62,11 @@ public class SecurityContextFX {
         }
 
         return message;
+    }
+
+    public synchronized void reset() {
+        sendSequenceNumber = 0;
+        receiveSequenceNumber = 0;
+        seenMessages.clear();
     }
 }
