@@ -1,3 +1,6 @@
+package Security;
+
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -6,10 +9,10 @@ public class SecurityContext {
     private int sendSequenceNumber = 0;
     private int receiveSequenceNumber = 0;
 
-    private Set<String> seenMessages = new HashSet<>();
+    private Set<String> seenMessages = Collections.synchronizedSet(new HashSet<>());
     private final long MAX_AGE = 300000; // 5 minutes
 
-    public String addSecurityHeaders(String message) {
+    public synchronized String addSecurityHeaders(String message) {
         long timestamp = System.currentTimeMillis();
         sendSequenceNumber++; // ⭐ Compteur d'ENVOI uniquement
 
@@ -17,7 +20,7 @@ public class SecurityContext {
         return securedMessage;
     }
 
-    public String verifySecurityHeaders(String securedMessage) {
+    public synchronized String verifySecurityHeaders(String securedMessage) {
         String[] parts = securedMessage.split("\\|", 3);
         if (parts.length != 3) {
             throw new SecurityException("En-têtes de sécurité manquantes");

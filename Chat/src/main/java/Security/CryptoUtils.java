@@ -1,7 +1,10 @@
+package Security;
+
 import java.security.*;
 import javax.crypto.*;
 import javax.crypto.spec.*;
 import java.util.Base64;
+import java.io.UnsupportedEncodingException;
 
 public class CryptoUtils {
 
@@ -32,16 +35,17 @@ public class CryptoUtils {
         byte[] cipherBytes = Base64.getDecoder().decode(parts[1]);
 
         Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        cipher.init(Cipher.DECRYPT_MODE, aesKey, new IvParameterSpec(iv));
-        byte[] plainBytes = cipher.doFinal(cipherBytes);
+        IvParameterSpec ivSpec = new IvParameterSpec(iv);
+        cipher.init(Cipher.DECRYPT_MODE, aesKey, ivSpec);
 
+        byte[] plainBytes = cipher.doFinal(cipherBytes);
         return new String(plainBytes, "UTF-8");
     }
 
-    // --- Fonctions de Signature ---
+    // --- Fonctions de signature et de chiffrement RSA/AES ---
 
     public static String signAndEncrypt(String plain, PrivateKey privateKey, SecretKeySpec aesKey) throws Exception {
-        // 1. Signature du message
+        // 1. Signature du message clair (avec headers de sécurité)
         Signature signature = Signature.getInstance("SHA256withRSA");
         signature.initSign(privateKey);
         signature.update(plain.getBytes("UTF-8"));
@@ -76,7 +80,7 @@ public class CryptoUtils {
             throw new SecurityException("Signature invalide (Authentification de l'émetteur échouée)");
         }
 
-        // 4. Vérification des en-têtes de sécurité et extraction du message clair
+        // 4. Vérification des en-têtes de sécurité et extraction du message
         return context.verifySecurityHeaders(securedMessage);
     }
 }
