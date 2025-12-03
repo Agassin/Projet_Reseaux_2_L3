@@ -58,28 +58,10 @@ public class ClientSecure {
             System.out.println(" Poignée de main confirmée par le serveur: " + serverConfirm);
 
             // === NOUVEAU: Lancement du Thread d'Écoute (Reader) ===
-            Thread readerThread = new Thread(new ServerReader(socket, in, serverPublicKey, aesKeySpec, securityContext));
-            readerThread.start();
+            Thread readerThread = new Thread(new ServerReader(socket, in, serverPublicKey, aesKeySpec, securityContext, username));            readerThread.start();
 
             System.out.println("\n Chat sécurisé prêt. Tapez 'bye' pour quitter.");
 
-            // --- Étape d'identification ---
-            // Le serveur attend le format /LOGIN:username:password (bien que 'password' soit ignoré pour l'instant)
-            String password = "password_bidon"; // Simuler un mot de passe
-            String identificationMsg = "/LOGIN:" + username + ":" + password; // <--- NOUVEAU FORMAT
-
-            String securedIdMsg = securityContext.addSecurityHeaders(identificationMsg);
-            String encryptedIdMsg = CryptoUtils.signAndEncrypt(securedIdMsg, clientPrivateKey, aesKeySpec);
-            out.println(encryptedIdMsg);
-
-            // Attendre la réponse d'authentification du serveur (AUTH_OK ou AUTH_FAIL)
-            String authResponseEncrypted = in.readLine();
-            String authResponse = CryptoUtils.verifyAndDecrypt(authResponseEncrypted, serverPublicKey, aesKeySpec, securityContext);
-            System.out.println(" [AUTH] Réponse du serveur: " + authResponse);
-
-            if (authResponse.startsWith("AUTH_FAIL")) {
-                throw new SecurityException("Authentification échouée: " + authResponse.split(":")[1]);
-            }
 
 
             // --- ÉTAPE 2: Communication sécurisée (Thread principal pour l'écriture) ---
