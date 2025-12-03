@@ -7,6 +7,9 @@ import javax.crypto.spec.*;
 import java.util.Base64;
 import java.util.Scanner;
 
+import Security.SecurityContext;
+import Security.CryptoUtils;
+
 public class ClientSecure {
     public static final String SERVER_HOST = "localhost";
     public static final int SERVER_PORT = 5000;
