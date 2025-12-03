@@ -12,7 +12,7 @@ import java.util.Optional;
 
 public class ClientController {
 
-    @FXML public ListView<String> messageArea;
+    @FXML private ListView<String> messageArea;
     @FXML private TextField inputField;
     @FXML private ListView<String> roomList;
     @FXML private Label currentRoomLabel;
@@ -33,26 +33,21 @@ public class ClientController {
     public void initialize() {
         inputField.setOnAction(event -> sendMessage());
 
-        // Initialiser la liste des salons
         roomList.getItems().add("Général");
         roomList.getSelectionModel().selectFirst();
         roomList.setOnMouseClicked(this::handleRoomSelection);
+        currentRoomLabel.setText("Salon Actuel : " + currentRoom);
     }
 
     private void handleRoomSelection(MouseEvent event) {
         String selectedRoom = roomList.getSelectionModel().getSelectedItem();
         if (selectedRoom != null && !selectedRoom.equals(currentRoom)) {
-            try {
-                // (Ici, vous enverriez client.joinRoom(selectedRoom) au serveur)
-
-                currentRoom = selectedRoom;
-                currentRoomLabel.setText("Salon Actuel : " + currentRoom);
-                messageArea.getItems().clear();
-                displayMessage("--- Vous avez rejoint le salon: " + currentRoom + " ---");
-
-            } catch (Exception e) {
-                displayMessage("Erreur de changement de salon: " + e.getMessage());
-            }
+            // Logique de changement de salon (à implémenter côté serveur)
+            currentRoom = selectedRoom;
+            currentRoomLabel.setText("Salon Actuel : " + currentRoom);
+            messageArea.getItems().clear();
+            displayMessage("--- Vous avez rejoint le salon: " + currentRoom + " ---");
+            // Envoyer un message au serveur pour rejoindre le salon si nécessaire
         }
     }
 
@@ -66,20 +61,13 @@ public class ClientController {
         Optional<String> result = dialog.showAndWait();
         result.ifPresent(privateUser -> {
             String newRoomName = "Privé avec " + privateUser;
-            try {
-                // (Ici, vous enverriez client.requestPrivateRoom(privateUser) au serveur)
-
-                Platform.runLater(() -> {
-                    if (!roomList.getItems().contains(newRoomName)) {
-                        roomList.getItems().add(newRoomName);
-                    }
-                    roomList.getSelectionModel().select(newRoomName);
-                    handleRoomSelection(null);
-                });
-
-            } catch (Exception e) {
-                displayMessage("Erreur lors de la création du salon: " + e.getMessage());
-            }
+            Platform.runLater(() -> {
+                if (!roomList.getItems().contains(newRoomName)) {
+                    roomList.getItems().add(newRoomName);
+                }
+                roomList.getSelectionModel().select(newRoomName);
+                handleRoomSelection(null); // Force le changement d'affichage
+            });
         });
     }
 
@@ -89,19 +77,22 @@ public class ClientController {
         if (message.isEmpty() || client == null) return;
 
         try {
-            // CORRECTION : Le message brut, sendSecuredMessage ajoutera le username
-            client.sendSecuredMessage(message);
+            // Format du message envoyé au serveur : SALON|MESSAGE
+            String messageToSend = currentRoom + "|" + message;
+            client.sendSecuredMessage(messageToSend);
 
-            // Affichage local immédiat avec votre username
+            // Affichage local immédiat
             displayMessage(username + " (" + currentRoom + "): " + message);
             inputField.clear();
 
         } catch (Exception e) {
-            displayMessage("Erreur d'envoi du message: " + e.getMessage());
+            displayMessage("[ERREUR ENVOI] " + e.getMessage());
         }
     }
 
     public void displayMessage(String message) {
+        // Le serveur nous envoie : [NOM_EXPEDITEUR] : [SALON] | [MESSAGE]
+        // Nous allons l'afficher tel quel pour le moment.
         Platform.runLater(() -> {
             messageArea.getItems().add(message);
             messageArea.scrollTo(messageArea.getItems().size() - 1);

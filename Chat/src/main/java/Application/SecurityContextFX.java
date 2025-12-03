@@ -3,32 +3,31 @@ package Application;
 import java.util.HashSet;
 import java.util.Set;
 
-public class    SecurityContextFX {
+public class SecurityContextFX {
     private int sequenceNumber = 0;
-    private Set<String> seenMessages = new HashSet<>();
+    private final Set<String> seenMessages = new HashSet<>();
     private final long MAX_AGE = 300000; // 5 minutes en millisecondes
 
-    public String addSecurityHeaders(String message) {
+    // ⭐ SYNCHRONISÉ pour la sécurité des threads
+    public synchronized String addSecurityHeaders(String message) {
         long timestamp = System.currentTimeMillis();
         sequenceNumber++;
 
         String securedMessage = timestamp + "|" + sequenceNumber + "|" + message;
 
-        // Protection contre le replay (sans synchronized, peut être imprécis)
         if (seenMessages.contains(securedMessage)) {
             throw new SecurityException("Message rejoué détecté");
         }
         seenMessages.add(securedMessage);
 
-        // Nettoyage périodique
         if (seenMessages.size() > 1000) {
             seenMessages.clear();
         }
-
         return securedMessage;
     }
 
-    public String verifySecurityHeaders(String securedMessage) {
+    // ⭐ SYNCHRONISÉ pour la sécurité des threads
+    public synchronized String verifySecurityHeaders(String securedMessage) {
         String[] parts = securedMessage.split("\\|", 3);
         if (parts.length != 3) {
             throw new SecurityException("En-têtes de sécurité manquantes");
@@ -38,17 +37,16 @@ public class    SecurityContextFX {
         int seq = Integer.parseInt(parts[1]);
         String message = parts[2];
 
-        // Vérification timestamp
         long currentTime = System.currentTimeMillis();
         if (Math.abs(currentTime - timestamp) > MAX_AGE) {
-            throw new SecurityException("Message trop ancien (tolérance de 5 minutes dépassée)");
+            throw new SecurityException("Message trop ancien");
         }
 
-        // Vérification séquence
         if (seq <= sequenceNumber) {
-            throw new SecurityException("Numéro de séquence invalide (plus petit ou égal au dernier vu)");
+            throw new SecurityException("Numéro de séquence invalide");
         }
         sequenceNumber = seq;
+        seenMessages.add(securedMessage);
 
         return message;
     }

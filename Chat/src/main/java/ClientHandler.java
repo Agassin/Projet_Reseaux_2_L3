@@ -8,29 +8,38 @@ import java.util.Base64;
 
 // Chaque instance de cette classe gère un client dans un thread séparé.
 public class ClientHandler implements Runnable {
-    private Socket clientSocket;
-    private SecurityContext securityContext = new SecurityContext();
+    private final Socket clientSocket;
+    private final SecurityContext securityContext = new SecurityContext();
+    // Le SecurityContext est maintenant thread-safe (méthodes synchronisées).
 
     // Attributs pour la communication sécurisée avec ce client spécifique
     private PrivateKey serverPrivateKey;
     private PublicKey clientPublicKey;
     private SecretKeySpec aesKeySpec;
     private PrintWriter out;
+    private BufferedReader in;
 
     private String clientName = "Inconnu";
-    private boolean authenticated = false; // ⭐ NOUVEAU : Flag d'authentification
+    private boolean authenticated = false; // Flag d'authentification
 
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
     }
 
-    // Méthode publique appelée par Serveur.broadcast()
+    /**
+     * Méthode publique appelée par Serveur.broadcast() pour envoyer un message à ce client.
+     * Le message est signé et chiffré avant l'envoi.
+     */
     public void sendMessage(String plainMessage) {
+        if (!authenticated) {
+            System.out.println("⚠️ [WARN] Tentative d'envoi broadcast non authentifiée ignorée.");
+            return;
+        }
         try {
             String securedMessage = securityContext.addSecurityHeaders(plainMessage);
             String encryptedReply = CryptoUtils.signAndEncrypt(securedMessage, serverPrivateKey, aesKeySpec);
             out.println(encryptedReply);
-            out.flush(); // ⭐ IMPORTANT : Forcer l'envoi
+            out.flush(); // IMPORTANT : Forcer l'envoi
         } catch (Exception e) {
             System.out.println("❌ Erreur lors de l'envoi broadcast à " + clientName + ": " + e.getMessage());
         }
@@ -38,176 +47,134 @@ public class ClientHandler implements Runnable {
 
     @Override
     public void run() {
-        BufferedReader in = null;
         try {
-            in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
             this.out = new PrintWriter(clientSocket.getOutputStream(), true);
+            this.in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
 
-            // --- ÉTAPE 1: Poignée de main de sécurité (Handshake) ---
-            System.out.println("🔐 [HANDSHAKE] Début avec " + clientSocket.getRemoteSocketAddress());
+            performHandshake();
 
-            // Génération des clés RSA du serveur
-            KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
-            kpg.initialize(2048);
-            KeyPair kp = kpg.generateKeyPair();
-            this.serverPrivateKey = kp.getPrivate();
-            PublicKey serverPublicKey = kp.getPublic();
+            String encryptedClientMessage;
 
-            // Envoi de la clé publique au client
-            String pubKeyB64 = Base64.getEncoder().encodeToString(serverPublicKey.getEncoded());
-            out.println(pubKeyB64);
-            System.out.println("📤 [HANDSHAKE] Clé publique serveur envoyée");
-
-            // Réception de la clé publique du client
-            String clientPubKeyB64 = in.readLine();
-            if (clientPubKeyB64 == null) throw new SecurityException("Clé publique client manquante");
-
-            byte[] clientPubKeyBytes = Base64.getDecoder().decode(clientPubKeyB64);
-            KeyFactory kf = KeyFactory.getInstance("RSA");
-            X509EncodedKeySpec keySpec = new X509EncodedKeySpec(clientPubKeyBytes);
-            this.clientPublicKey = kf.generatePublic(keySpec);
-            System.out.println("📥 [HANDSHAKE] Clé publique client reçue");
-
-            // Échange de clé AES sécurisé
-            String encryptedAesKeyB64 = in.readLine();
-            if (encryptedAesKeyB64 == null) throw new SecurityException("Clé AES manquante");
-
-            byte[] encryptedAesKey = Base64.getDecoder().decode(encryptedAesKeyB64);
-            Cipher rsaCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
-            rsaCipher.init(Cipher.DECRYPT_MODE, serverPrivateKey);
-            byte[] aesKeyBytes = rsaCipher.doFinal(encryptedAesKey);
-            this.aesKeySpec = new SecretKeySpec(aesKeyBytes, "AES");
-            System.out.println("🔑 [HANDSHAKE] Clé AES déchiffrée");
-
-            // Confirmation de l'établissement de la sécurité
-            String secureConfirm = securityContext.addSecurityHeaders("SECURE-HANDSHAKE-OK");
-            String encryptedConfirm = CryptoUtils.signAndEncrypt(secureConfirm, serverPrivateKey, aesKeySpec);
-            out.println(encryptedConfirm);
-            out.flush();
-
-            System.out.println("✅ [HANDSHAKE] Poignée de main sécurisée terminée avec " + clientSocket.getRemoteSocketAddress());
-
-            // --- ⭐ ÉTAPE 2: AUTHENTIFICATION (NOUVEAU) ---
-            System.out.println("🔐 [AUTH] Attente des credentials...");
-
-            String authLine = in.readLine();
-            if (authLine == null) {
-                System.err.println("❌ [AUTH] Client déconnecté avant authentification");
-                return;
-            }
-
-            // Décrypter le message d'authentification
-            String decryptedAuth = CryptoUtils.verifyAndDecrypt(authLine, clientPublicKey, aesKeySpec, securityContext);
-            System.out.println("📥 [AUTH] Message reçu: " + decryptedAuth);
-
-            // Vérifier que c'est bien un message de login
-            if (!decryptedAuth.startsWith("/LOGIN:")) {
-                System.err.println("❌ [AUTH] Format invalide (attendu /LOGIN:) : " + decryptedAuth);
-                sendAuthResponse(false, "Format d'authentification invalide");
-                return;
-            }
-
-            // Traiter l'authentification
-            handleLogin(decryptedAuth);
-
-            // Si l'authentification a échoué, on arrête ici
-            if (!authenticated) {
-                System.out.println("❌ [AUTH] Authentification échouée, fermeture connexion");
-                return;
-            }
-
-            // ⭐ AJOUT DU CLIENT UNIQUEMENT APRÈS AUTHENTIFICATION RÉUSSIE
-            Serveur.addClient(this);
-            System.out.println("✅ [AUTH] Client " + clientName + " authentifié et ajouté au serveur");
-
-            // Notifier les autres utilisateurs
-            Serveur.broadcast(clientName + " a rejoint le chat.", this);
-
-            // --- ÉTAPE 3: Communication sécurisée (boucle d'écoute) ---
-            String line;
-            while ((line = in.readLine()) != null) {
+            // Boucle d'écoute principale
+            while ((encryptedClientMessage = in.readLine()) != null) {
                 try {
-                    // Vérifie/Décrypte
-                    String decrypted = CryptoUtils.verifyAndDecrypt(line, clientPublicKey, aesKeySpec, securityContext);
+                    // Vérification, décryptage, vérification des headers de sécurité (sequence, timestamp)
+                    String decryptedMessageWithHeaders = CryptoUtils.verifyAndDecrypt(
+                            encryptedClientMessage, clientPublicKey, aesKeySpec, securityContext
+                    );
 
-                    System.out.println("💬 Reçu (clair) de " + clientName + " : " + decrypted);
+                    // Le contenu réel du message est la troisième partie après les headers de sécurité
+                    String[] parts = decryptedMessageWithHeaders.split("\\|", 3);
+                    String message = parts[2];
 
-                    // Gestion des commandes spéciales
-                    if (decrypted.toLowerCase().contains("bye") ||
-                            decrypted.toLowerCase().contains("au revoir")) {
-                        sendMessage("Au revoir " + clientName + " !");
-                        break;
+                    if (message.startsWith("/LOGIN:")) {
+                        // 1. Traiter l'authentification
+                        handleLogin(message);
+                    } else if (authenticated) {
+                        // 2. Si authentifié, traiter comme un message de chat normal
+                        System.out.println("💬 Reçu (clair) de " + clientName + " : " + message);
+
+                        if (message.toLowerCase().contains("bye") || message.toLowerCase().contains("au revoir")) {
+                            sendMessage("Au revoir " + clientName + " !");
+                            break;
+                        }
+
+                        // DIFFUSION DU MESSAGE REÇU
+                        Serveur.broadcast(clientName + " : " + message, this);
+                    } else {
+                        System.out.println("❌ Message ignoré (non authentifié) : " + message);
+                        // Optionnel : fermer la connexion si un message est envoyé avant login
                     }
 
-                    // DIFFUSION DU MESSAGE REÇU
-                    Serveur.broadcast(decrypted, this);
-
                 } catch (SecurityException e) {
-                    System.out.println("⚠️ Message rejeté de " + clientName + " pour raison de sécurité: " + e.getMessage());
-                    sendMessage("ERROR: Security violation");
+                    System.out.println("🚨 [ALERTE SÉCU] Message rejeté de " + clientName + " : " + e.getMessage());
+                    sendAuthResponse(false, "Security violation: " + e.getMessage());
+                    // Optionnel: break pour déconnecter le client après une violation
                 }
             }
 
+        } catch (SocketException e) {
+            System.out.println("ℹ️ Connexion fermée pour " + clientName + ".");
         } catch (Exception e) {
-            System.out.println("❌ [Thread " + Thread.currentThread().getId() + "] Erreur avec " + clientName + ": " + e.getMessage());
+            System.err.println("❌ Erreur inattendue pour " + clientName + ": " + e.getMessage());
             e.printStackTrace();
         } finally {
-            try {
-                if (in != null) in.close();
-                if (out != null) out.close();
-                if (clientSocket != null) clientSocket.close();
-            } catch (IOException e) {}
-
-            // RETIRER LE CLIENT
+            closeConnection();
             Serveur.removeClient(this, clientName);
         }
     }
 
-    // ⭐ NOUVELLE MÉTHODE : Gérer l'authentification
-    private void handleLogin(String loginMessage) {
-        try {
-            // Format attendu: /LOGIN:username:password
-            String[] parts = loginMessage.split(":", 3);
+    private void performHandshake() throws Exception {
+        System.out.println("🔐 [HANDSHAKE] Début avec " + clientSocket.getRemoteSocketAddress());
 
-            if (parts.length < 3) {
-                System.err.println("❌ [AUTH] Format invalide, parties reçues: " + parts.length);
-                sendAuthResponse(false, "Format de login invalide");
-                return;
-            }
+        // 1. Génération et envoi de la clé publique du serveur
+        KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+        kpg.initialize(2048);
+        KeyPair kp = kpg.generateKeyPair();
+        this.serverPrivateKey = kp.getPrivate();
+        PublicKey serverPublicKey = kp.getPublic();
+        String pubKeyB64 = Base64.getEncoder().encodeToString(serverPublicKey.getEncoded());
+        out.println(pubKeyB64);
+        out.flush();
 
-            String username = parts[1].trim();
-            String password = parts[2].trim();
+        // 2. Réception de la clé publique du client
+        String clientPubKeyB64 = in.readLine();
+        if (clientPubKeyB64 == null) throw new SecurityException("Clé publique client manquante");
+        byte[] clientPubKeyBytes = Base64.getDecoder().decode(clientPubKeyB64);
+        KeyFactory kf = KeyFactory.getInstance("RSA");
+        X509EncodedKeySpec keySpec = new X509EncodedKeySpec(clientPubKeyBytes);
+        this.clientPublicKey = kf.generatePublic(keySpec);
 
-            System.out.println("🔐 [AUTH] Tentative - Username: " + username + ", Password: ***");
+        // 3. Réception et déchiffrement de la clé AES
+        String encryptedAesKeyB64 = in.readLine();
+        if (encryptedAesKeyB64 == null) throw new SecurityException("Clé AES manquante");
+        byte[] encryptedAesKey = Base64.getDecoder().decode(encryptedAesKeyB64);
+        Cipher rsaCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+        rsaCipher.init(Cipher.DECRYPT_MODE, serverPrivateKey);
+        byte[] aesKeyBytes = rsaCipher.doFinal(encryptedAesKey);
+        this.aesKeySpec = new SecretKeySpec(aesKeyBytes, "AES");
 
-            // ⭐ Validation des credentials
-            boolean isValid = authenticateUser(username, password);
+        // 4. Confirmation de l'établissement de la sécurité
+        String secureConfirm = securityContext.addSecurityHeaders("SECURE-HANDSHAKE-OK");
+        String encryptedConfirm = CryptoUtils.signAndEncrypt(secureConfirm, serverPrivateKey, aesKeySpec);
+        out.println(encryptedConfirm);
+        out.flush();
 
-            if (isValid) {
-                this.clientName = username;
-                this.authenticated = true;
-                System.out.println("✅ [AUTH] Authentification RÉUSSIE pour: " + username);
-                sendAuthResponse(true, "Bienvenue " + username);
-            } else {
-                this.authenticated = false;
-                System.out.println("❌ [AUTH] Authentification ÉCHOUÉE pour: " + username);
-                sendAuthResponse(false, "Identifiants incorrects");
-            }
+        System.out.println("✅ [HANDSHAKE] Poignée de main sécurisée terminée avec " + clientSocket.getRemoteSocketAddress());
+    }
 
-        } catch (Exception e) {
-            System.err.println("❌ [AUTH] Erreur lors de l'authentification: " + e.getMessage());
-            e.printStackTrace();
-            try {
-                sendAuthResponse(false, "Erreur serveur lors de l'authentification");
-            } catch (Exception ex) {
-                ex.printStackTrace();
-            }
+    // Gère la commande /LOGIN:
+    private void handleLogin(String loginCommand) throws Exception {
+        // Format attendu: /LOGIN:username:password
+        String[] parts = loginCommand.split(":", 3);
+
+        if (parts.length < 3) {
+            sendAuthResponse(false, "Format de login invalide");
+            return;
+        }
+
+        String username = parts[1].trim();
+        String password = parts[2].trim();
+
+        System.out.println("🔐 [AUTH] Tentative - Username: " + username + ", Password: ***");
+
+        boolean isValid = authenticateUser(username, password);
+
+        if (isValid) {
+            this.clientName = username;
+            this.authenticated = true;
+            System.out.println("✅ [AUTH] Authentification RÉUSSIE pour: " + username);
+            sendAuthResponse(true, "Bienvenue " + username);
+        } else {
+            this.authenticated = false;
+            System.out.println("❌ [AUTH] Authentification ÉCHOUÉE pour: " + username);
+            sendAuthResponse(false, "Identifiants incorrects");
         }
     }
 
-    // ⭐ NOUVELLE MÉTHODE : Envoyer la réponse d'authentification
+    // Envoie la réponse d'authentification (AUTH_OK ou AUTH_FAIL)
     private void sendAuthResponse(boolean success, String message) throws Exception {
-        String response = success ? "AUTH_OK: " + message : "AUTH_FAIL: " + message;
+        String response = success ? "AUTH_OK:" + message : "AUTH_FAIL:" + message;
 
         System.out.println("📤 [AUTH] Envoi réponse: " + response);
 
@@ -216,26 +183,24 @@ public class ClientHandler implements Runnable {
         String encryptedMsg = CryptoUtils.signAndEncrypt(securedMsg, serverPrivateKey, aesKeySpec);
 
         out.println(encryptedMsg);
-        out.flush(); // ⚠️ CRITIQUE : Forcer l'envoi immédiat
+        out.flush();
 
         System.out.println("✅ [AUTH] Réponse envoyée et flushée");
     }
 
-    // ⭐ NOUVELLE MÉTHODE : Valider les credentials
+    // Valider les credentials (Mode Test)
     private boolean authenticateUser(String username, String password) {
-        // ⭐ MODE TEST : Accepter tous les logins
-        System.out.println("ℹ️ [AUTH] Mode test : tous les logins sont acceptés");
+        // MODE TEST : Accepte tous les logins pour l'instant
         return true;
+    }
 
-        // OPTION 2 : Credentials en dur (décommentez pour tester)
-        /*
-        if (username.equals("admin") && password.equals("1234")) return true;
-        if (username.equals("alice") && password.equals("password")) return true;
-        if (username.equals("bob") && password.equals("secret")) return true;
-        return false;
-        */
+    private void closeConnection() {
+        try {
+            if (in != null) in.close();
+            if (out != null) out.close();
+            if (clientSocket != null) clientSocket.close();
+        } catch (IOException e) {
 
-        // OPTION 3 : Base de données (à implémenter plus tard)
-        // return UserDatabase.checkCredentials(username, password);
+        }
     }
 }
