@@ -37,15 +37,15 @@ public class ClientSecure {
             X509EncodedKeySpec keySpec = new X509EncodedKeySpec(serverPubKeyBytes);
             PublicKey serverPublicKey = kf.generatePublic(keySpec);
 
-            // Génération et envoi de la clé publique du client
+            // Génération des clés du client pour la signature
             KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
             kpg.initialize(2048);
             KeyPair clientKeyPair = kpg.generateKeyPair();
             PrivateKey clientPrivateKey = clientKeyPair.getPrivate();
-            String clientPubKeyB64 = Base64.getEncoder().encodeToString(clientKeyPair.getPublic().getEncoded());
-            out.println(clientPubKeyB64);
 
-            // Échange de clé AES sécurisé
+            // *** DÉBUT DE LA CORRECTION D'ORDRE ***
+
+            // Échange de clé AES sécurisé (DOIT ÊTRE ENVOYÉ EN PREMIER)
             KeyGenerator kg = KeyGenerator.getInstance("AES");
             kg.init(128);
             SecretKey aesKey = kg.generateKey();
@@ -55,7 +55,14 @@ public class ClientSecure {
             rsaCipher.init(Cipher.ENCRYPT_MODE, serverPublicKey);
             byte[] encryptedAesKey = rsaCipher.doFinal(aesKey.getEncoded());
             String encryptedAesKeyB64 = Base64.getEncoder().encodeToString(encryptedAesKey);
-            out.println(encryptedAesKeyB64);
+            out.println(encryptedAesKeyB64); // ENVOI 1: Clé AES chiffrée
+
+            // Envoi de la clé publique du client (DOIT ÊTRE ENVOYÉ EN SECOND)
+            String clientPubKeyB64 = Base64.getEncoder().encodeToString(clientKeyPair.getPublic().getEncoded());
+            out.println(clientPubKeyB64); // ENVOI 2: Clé publique du client
+
+            // *** FIN DE LA CORRECTION D'ORDRE ***
+
 
             // Confirmation de sécurité
             String serverConfirmEncrypted = in.readLine();
@@ -78,10 +85,20 @@ public class ClientSecure {
             if (authResponseEncrypted == null) throw new SecurityException("Réponse d'authentification manquante.");
 
             String authResponse = CryptoUtils.verifyAndDecrypt(authResponseEncrypted, serverPublicKey, aesKeySpec, securityContext);
+
+            // --- CORRECTION DE L'ERREUR PRÉCÉDENTE : VÉRIFICATION DE NULLITÉ ---
+            if (authResponse == null) {
+                throw new SecurityException("Réponse d'authentification illisible/invalide (le décryptage a retourné null).");
+            }
+            // -------------------------------------------------------------------
+
             System.out.println(" [AUTH] Réponse du serveur: " + authResponse);
 
             if (authResponse.startsWith("AUTH_FAIL")) {
-                throw new SecurityException("Authentification échouée: " + authResponse.split(":")[1]);
+                // Rendre le split plus robuste
+                String[] parts = authResponse.split(":", 2);
+                String failMessage = (parts.length > 1) ? parts[1] : "Format de réponse d'échec invalide.";
+                throw new SecurityException("Authentification échouée: " + failMessage);
             }
 
             // === Lancement du Thread d'Écoute (Reader) APRES l'authentification réussie ===

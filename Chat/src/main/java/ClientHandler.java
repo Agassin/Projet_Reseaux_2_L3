@@ -24,7 +24,9 @@ public class ClientHandler implements Runnable {
 
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
-        try {
+
+        // ** CORRECTION : SUPPRESSION DE L'INITIALISATION RSA REDONDANTE **
+        /* try {
             // S'assurer que la clé privée du serveur est initialisée
             KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
             kpg.initialize(2048);
@@ -32,6 +34,8 @@ public class ClientHandler implements Runnable {
         } catch (NoSuchAlgorithmException e) {
             System.err.println("Erreur d'initialisation de clé RSA: " + e.getMessage());
         }
+        */
+        // La clé sera générée dans performHandshake() où la clé publique est envoyée.
     }
 
     public String getClientName() { return clientName; }
@@ -67,6 +71,7 @@ public class ClientHandler implements Runnable {
             String authRequestEncrypted = in.readLine();
             if (authRequestEncrypted == null) throw new SecurityException("Requête d'authentification manquante.");
 
+            // ** Note: Cette ligne utilise serverPrivateKey et aesKeySpec générés dans performHandshake()
             String authRequestSecured = CryptoUtils.verifyAndDecrypt(authRequestEncrypted, clientPublicKey, aesKeySpec, securityContext);
 
             processAuth(authRequestSecured);
@@ -105,7 +110,7 @@ public class ClientHandler implements Runnable {
         out.flush();
         System.out.println("✅ [HANDSHAKE] Clé publique serveur envoyée");
 
-        // 2. Recevoir la clé AES chiffrée
+        // 2. Recevoir la clé AES chiffrée (CORRECT - le client l'envoie maintenant en premier)
         String encryptedAESKeyB64 = in.readLine();
         if (encryptedAESKeyB64 == null) throw new SecurityException("Clé AES chiffrée manquante");
         byte[] encryptedAESKeyBytes = Base64.getDecoder().decode(encryptedAESKeyB64);
@@ -118,12 +123,11 @@ public class ClientHandler implements Runnable {
         System.out.println("✅ [HANDSHAKE] Clé AES reçue et décryptée");
 
 
-        // 3. Recevoir la clé publique du client (POUR SIGNATURES)
+        // 3. Recevoir la clé publique du client (POUR SIGNATURES) (CORRECT - le client l'envoie maintenant en second)
         String clientPubKeyB64 = in.readLine();
         if (clientPubKeyB64 == null) throw new SecurityException("Clé publique client manquante");
         byte[] clientPubKeyBytes = Base64.getDecoder().decode(clientPubKeyB64);
         KeyFactory kf = KeyFactory.getInstance("RSA");
-        // L'erreur InvalidKeyException se produisait ici car les données lues n'étaient pas une clé publique.
         clientPublicKey = kf.generatePublic(new X509EncodedKeySpec(clientPubKeyBytes));
         System.out.println("✅ [HANDSHAKE] Clé publique client reçues");
 
